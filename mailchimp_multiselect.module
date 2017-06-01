@@ -1,0 +1,148 @@
+<?php
+
+/**
+ * @file
+ * Mailchimp Multiselect module.
+ */
+
+module_load_include('inc', 'mailchimp_multiselect', 'includes/mailchimp_multiselect.field');
+
+/**
+ * Implements hook_form_alter().
+ */
+function mailchimp_multiselect_form_alter(&$form, &$form_state, $form_id)
+{
+    if ($form_id = 'field_ui_field_settings_form') {
+        module_load_include('inc', 'mailchimp_multiselect', 'includes/mailchimp_multiselect');
+        if (isset($form['field']['type']['#value']) && $form['field']['type']['#value'] == 'mailchimp_lists_subscription') {
+            /*  Need to unset all lists that are already attached in any field same, this is already working functionality in mailchimp */
+
+            if (!isset($form['field']['settings']['mc_list_id']['#default_value']) || empty($form['field']['settings']['mc_list_id']['#default_value'])) {
+                $all_lists = mailchimp_multiselect_get_all_lists();
+                if (!empty($all_lists)) {
+                    foreach ($form['field']['settings']['mc_list_id']['#options'] as $key => $list) {
+                        if (in_array($key, $all_lists)) {
+                            unset($form['field']['settings']['mc_list_id']['#options'][$key]);
+                        }
+                    }
+                }
+            }
+
+            array_unshift($form['#submit'], 'mailchimp_multiselect_submit');
+            /* If there is any list then make this field multi select and add submit handler and unset first option ie --select--*/
+            if (count($form['field']['settings']['mc_list_id']['#options']) > 1) {
+                $form['field']['settings']['mc_list_id']['#multiple'] = true;
+                $form['field']['settings']['mc_list_id']['#options'] = array_slice($form['field']['settings']['mc_list_id']['#options'], 1, count($form['field']['settings']['mc_list_id']['#options']));
+            }
+
+        }
+
+        if (!isset($form['#field']) && isset($form['field']['settings']['mc_list_id']) && !empty($form['field']['settings']['mc_list_id'])) {
+
+            $form['field']['settings']['mc_list_id']['#multiple'] = true;
+            $list_array = mailchimp_multiselect_get_all_lists($form['field']['field_name']['#value']);
+            $form['field']['settings']['mc_list_id']['#default_value'] = $list_array;
+        }
+
+        if (isset($form['#field']) && isset($form['field']['settings']['mc_list_id']['#default_value']) && !empty($form['field']['settings']['mc_list_id']['#default_value'])) {
+            if (isset($form['#field']['field_name'])) {
+                array_unshift($form['#submit'], 'mailchimp_multiselect_submit');
+                $list_array = mailchimp_multiselect_get_all_lists($form['#field']['field_name']);
+                $form['field']['settings']['mc_list_id']['#multiple'] = true;
+                $form['field']['settings']['mc_list_id']['#default_value'] = $list_array;
+            }
+        }
+    }
+}
+
+/**
+ * Additional submit handler if field is mailchimp widget.
+ */
+function mailchimp_multiselect_submit($form, &$form_state)
+{
+    if (isset($form_state['values']['field']['settings']['mc_list_id']) && !empty($form_state['values']['field']['settings']['mc_list_id']) && is_array($form_state['values']['field']['settings']['mc_list_id'])) {
+
+        if (isset($form_state['values']['field']['field_name'])) {
+
+            db_delete('mailchimp_multiselect_list')
+                ->condition('field_name', $form_state['values']['field']['field_name'])
+                ->execute();
+
+            $master = reset($form_state['values']['field']['settings']['mc_list_id']);
+            if (empty($master)) {
+                $master = key(array_slice($form_state['values']['field']['settings']['mc_list_id'], 1, 1));
+            }
+
+            if (!empty($master)) {
+                db_insert('mailchimp_multiselect_list')
+                    ->fields(array(
+                        'field_name' => $form_state['values']['field']['field_name'],
+                        'list_type' => 'master',
+                        'mc_list_master_id' => '',
+                        'mc_list_id' => $master,
+                    ))
+                    ->execute();
+
+                foreach ($form_state['values']['field']['settings']['mc_list_id'] as $key => $value) {
+                    if ($master != $value && !empty($value)) {
+                        $re['master'] = $master;
+                        $re['value'] = $value;
+                        db_insert('mailchimp_multiselect_list')
+                            ->fields(array(
+                                'field_name' => $form_state['values']['field']['field_name'],
+                                'mc_list_master_id' => $master,
+                                'list_type' => 'child',
+                                'mc_list_id' => $value,
+                            ))
+                            ->execute();
+                    }
+                }
+
+            }
+        }
+
+        $form_state['values']['field']['settings']['mc_list_id'] = reset($form_state['values']['field']['settings']['mc_list_id']);
+    }
+}
+
+/**
+ * Implements hook_field_delete_field().
+ */
+function mailchimp_multiselect_field_delete_field($field)
+{
+    db_delete('mailchimp_multiselect_list')
+        ->condition('field_name', $field['field_name'])
+        ->execute();
+}
+
+/**
+ * Implements hook_mailchimp_unsubscribe_user().
+ */
+function mailchimp_multiselect_mailchimp_unsubscribe_user($list_id, $email)
+{
+    module_load_include('inc', 'mailchimp_multiselect', 'includes/mailchimp_multiselect');
+    $mc_lists = mailchimp_multiselect_get_child_lists($list_id);
+    if (!empty($mc_lists)) {
+        foreach ($mc_lists as $child_list_id) {
+            watchdog('unsubscribe_child', '<pre>' . print_r($child_list_id, true) . '</pre>');
+            mailchimp_unsubscribe_member($list_id, $email);
+        }
+    }
+}
+
+/**
+ * Implements hook_mailchimp_subscribe_user().
+ */
+function mailchimp_multiselect_mailchimp_subscribe_user($list_id, $email, $merge_vars)
+{
+    module_load_include('inc', 'mailchimp_multiselect', 'includes/mailchimp_multiselect');
+    $mc_lists = mailchimp_multiselect_get_child_lists($list_id);
+    $field_name = mailchimp_multiselect_get_list_related_field($list_id);
+    $field = field_info_field($field_name);
+
+    if (!empty($mc_lists)) {
+        foreach ($mc_lists as $child_list_id) {
+            mailchimp_subscribe($child_list_id, $email, $merge_vars, $interests = array(), $field['settings']['double_opt_in'], $format = 'html');
+        }
+    }
+}

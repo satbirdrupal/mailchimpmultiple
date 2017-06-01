@@ -1,0 +1,51 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the mailchimp_multiselect module.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function mailchimp_multiselect_schema() {
+
+  $schema['mailchimp_multiselect_list'] = array(
+    'description' => t('MailChimp activity enabled entities.'),
+    'fields' => array(
+      'mailchimp_multiselect_list_id' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => t('Primary Key: Unique mailchimp_multiselect_list entity ID.'),
+      ),
+      'field_name' => array(
+        'description' => t('The machine-readable name of this mailchimp_multiselect_list field.'),
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ),
+      'mc_list_master_id' => array(
+        'description' => t('Master list ID'),
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => FALSE,
+      ),
+      'list_type' => array(
+        'description' => t('List Type ie master or child.'),
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ),
+      'mc_list_id' => array(
+        'description' => t('Mailchimp list id'),
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+      )
+    ),
+    'primary key' => array('mailchimp_multiselect_list_id')
+  );
+
+  return $schema;
+}
